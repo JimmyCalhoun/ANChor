@@ -72,15 +72,9 @@ open ANChor.app
 
 ## Configuration
 
-Currently, the Bluetooth address is hardcoded. To use with your device:
+ANChor **automatically discovers** paired Bose devices — no manual setup required. It scans your paired Bluetooth devices for known Bose name patterns and connects to the first one found (preferring already-connected devices).
 
-1. Find your device's Bluetooth address:
-   ```bash
-   system_profiler SPBluetoothDataType | grep -A5 "QC\|Bose"
-   ```
-2. Edit `Sources/ANChor/main.swift` and replace the address in `IOBluetoothDevice(addressString:)`
-
-> **Future improvement:** Auto-discovery of paired Bose devices.
+If multiple Bose devices are paired, it will connect to whichever is currently active.
 
 ## How It Works
 

@@ -32,7 +32,14 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var batteryLeft: Int = -1
     var batteryRight: Int = -1
     var batteryCase: Int = -1
+    var deviceName: String = "Bose Device"
     var onUpdate: (() -> Void)?
+    
+    // Known Bose Bluetooth name patterns
+    private static let bosePatterns = [
+        "Bose", "QC", "QuietComfort", "SoundSport", "NC 700",
+        "Frames", "Sport Earbuds", "Ultra Open"
+    ]
     
     override init() {
         let logPath = "/tmp/bosecontrol.log"
@@ -66,10 +73,40 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
         perform(#selector(doConnect), on: btThread!, with: nil, waitUntilDone: false)
     }
     
-    @objc private func doConnect() {
-        guard let dev = IOBluetoothDevice(addressString: "68-F2-1F-3E-C2-CD") else {
-            log("Device not found"); return
+    /// Scan paired Bluetooth devices for a Bose BMAP-capable device
+    private func findBoseDevice() -> IOBluetoothDevice? {
+        guard let paired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
+            log("No paired devices")
+            return nil
         }
+        log("Scanning \(paired.count) paired devices...")
+        
+        // Prefer connected devices, fall back to paired
+        var candidates: [(IOBluetoothDevice, Bool)] = []
+        for dev in paired {
+            let name = dev.name ?? ""
+            let matches = Self.bosePatterns.contains { name.localizedCaseInsensitiveContains($0) }
+            if matches {
+                log("  Candidate: \(name) [\(dev.addressString ?? "?")] connected=\(dev.isConnected())")
+                candidates.append((dev, dev.isConnected()))
+            }
+        }
+        
+        // Return first connected, or first candidate
+        if let connected = candidates.first(where: { $0.1 }) {
+            return connected.0
+        }
+        return candidates.first?.0
+    }
+    
+    @objc private func doConnect() {
+        // Auto-discover paired Bose device
+        guard let dev = findBoseDevice() else {
+            log("❌ No Bose device found")
+            DispatchQueue.main.async { self.onUpdate?() }
+            return
+        }
+        log("Found: \(dev.name ?? "unknown") [\(dev.addressString ?? "?")]")
         log("isConnected: \(dev.isConnected())")
         
         if !dev.isConnected() {
@@ -89,7 +126,8 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
         
         if result == kIOReturnSuccess, let c = chan {
             channel = c
-            log("✅ Connected")
+            deviceName = dev.name ?? "Bose Device"
+            log("✅ Connected to \(deviceName)")
             // Drain initial data
             let drainEnd = Date().addingTimeInterval(2.0)
             while Date() < drainEnd {
@@ -230,7 +268,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Build menu
         let menu = NSMenu()
-        let header = NSMenuItem(title: "James QC Ultra 2 Earbuds", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: bose.deviceName, action: nil, keyEquivalent: "")
         header.isEnabled = false
         header.attributedTitle = NSAttributedString(string: header.title, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])
         menu.addItem(header)
