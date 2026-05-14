@@ -26,6 +26,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var btRunLoop: RunLoop?
     private let ready = DispatchSemaphore(value: 0)
     private let logFile: FileHandle?
+    private var reconnectTimer: Timer?
     
     var isConnected: Bool { channel != nil }
     var currentMode: NoiseMode = .quiet
@@ -128,6 +129,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
             channel = c
             deviceName = dev.name ?? "Bose Device"
             log("✅ Connected to \(deviceName)")
+            stopReconnectTimer()
             // Drain initial data
             let drainEnd = Date().addingTimeInterval(2.0)
             while Date() < drainEnd {
@@ -233,7 +235,36 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelClosed(_ rfcommChannel: IOBluetoothRFCOMMChannel!) {
         log("CLOSED")
         channel = nil
+        startReconnectTimer()
         DispatchQueue.main.async { self.onUpdate?() }
+    }
+    
+    private func startReconnectTimer() {
+        stopReconnectTimer()
+        log("Starting auto-reconnect (every 5s)")
+        guard let rl = btRunLoop else { return }
+        perform(#selector(scheduleReconnectTimer), on: btThread!, with: nil, waitUntilDone: false)
+    }
+    
+    @objc private func scheduleReconnectTimer() {
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if self.channel == nil {
+                self.log("Auto-reconnect attempt...")
+                self.doConnect()
+            }
+            if self.channel != nil {
+                self.log("Reconnected — stopping timer")
+                self.stopReconnectTimer()
+            }
+        }
+    }
+    
+    private func stopReconnectTimer() {
+        if let t = reconnectTimer {
+            t.invalidate()
+            reconnectTimer = nil
+        }
     }
 }
 
