@@ -197,25 +197,24 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
         perform(#selector(doRefreshState), on: btThread!, with: nil, waitUntilDone: false)
     }
     
+    private var pendingMode: NoiseMode = .quiet
+    
     func setMode(_ mode: NoiseMode) {
-        let modeVal = mode.rawValue
-        let block: @convention(block) () -> Void = { [weak self] in
-            guard let self = self else { return }
-            self.log("setMode: \(mode.label)")
-            let resp = self.sendAndWait(bmapPacket(fblock: 31, func_id: 3, op: 5, payload: [modeVal, 0x00]))
-            if let r = resp, r.count >= 5 && r[2] & 0x0F == 6 {
-                self.currentMode = mode
-                self.log("✅ mode switched")
-            } else {
-                self.log("❌ mode switch failed")
-            }
-            DispatchQueue.main.async { self.onUpdate?() }
-        }
-        perform(#selector(runBlock(_:)), on: btThread!, with: block, waitUntilDone: false)
+        pendingMode = mode
+        perform(#selector(doSetMode), on: btThread!, with: nil, waitUntilDone: false)
     }
     
-    @objc private func runBlock(_ block: Any) {
-        if let b = block as? () -> Void { b() }
+    @objc private func doSetMode() {
+        let mode = pendingMode
+        log("setMode: \(mode.label)")
+        let resp = sendAndWait(bmapPacket(fblock: 31, func_id: 3, op: 5, payload: [mode.rawValue, 0x00]))
+        if let r = resp, r.count >= 5 && r[2] & 0x0F == 6 {
+            currentMode = mode
+            log("✅ mode switched")
+        } else {
+            log("❌ mode switch failed: \(resp?.map{String(format:"%02x",$0)}.joined(separator:" ") ?? "nil")")
+        }
+        DispatchQueue.main.async { self.onUpdate?() }
     }
     
     func disconnect() {
