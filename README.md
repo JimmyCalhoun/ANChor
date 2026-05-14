@@ -15,21 +15,15 @@ A lightweight macOS menu bar app for controlling Bose QuietComfort Ultra Earbuds
 
 ## Screenshot
 
-```
-🎧 70% 🔇
-┌──────────────────────────────┐
-│ James QC Ultra 2 Earbuds     │
-│ 🔋 L:70%  R:70%  Case:80%   │
-│ ─────────────────────────── │
-│ Noise Control                │
-│ ✓ 🔇  Quiet                 │
-│   👂  Aware                  │
-│ ─────────────────────────── │
-│ Refresh                  ⌘R  │
-│ ─────────────────────────── │
-│ Quit                     ⌘Q  │
-└──────────────────────────────┘
-```
+<!-- Replace with actual screenshot: -->
+<!-- ![ANChor menu bar](docs/screenshot.png) -->
+
+The menu bar shows a headphone icon with battery percentage and current mode indicator. Clicking it reveals:
+
+- Device name
+- Battery levels (Left / Right / Case)
+- Noise mode toggles (Quiet ✓ / Aware)
+- Refresh and Quit options
 
 ## Supported Devices
 
