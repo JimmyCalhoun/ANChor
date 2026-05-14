@@ -15,8 +15,7 @@ A lightweight macOS menu bar app for controlling Bose QuietComfort Ultra Earbuds
 
 ## Screenshot
 
-<!-- Replace with actual screenshot: -->
-<!-- ![ANChor menu bar](docs/screenshot.png) -->
+![ANChor menu bar](docs/screenshot.png)
 
 The menu bar shows a headphone icon with battery percentage and current mode indicator. Clicking it reveals:
 
