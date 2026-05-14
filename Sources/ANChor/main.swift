@@ -27,6 +27,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private let ready = DispatchSemaphore(value: 0)
     private let logFile: FileHandle?
     private var reconnectTimer: Timer?
+    private var pollTimer: Timer?
     
     var isConnected: Bool { channel != nil }
     var currentMode: NoiseMode = .quiet
@@ -137,6 +138,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
             }
             log("Drained initial, querying state...")
             doRefreshState()
+            startPollTimer()
         } else {
             log("❌ RFCOMM failed: \(result)")
         }
@@ -220,6 +222,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
     
     func disconnect() {
+        stopPollTimer()
         _ = channel?.close()
         channel = nil
     }
@@ -228,6 +231,16 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelData(_ rfcommChannel: IOBluetoothRFCOMMChannel!, data ptr: UnsafeMutableRawPointer!, length len: Int) {
         let bytes = Array(UnsafeBufferPointer(start: ptr.assumingMemoryBound(to: UInt8.self), count: len))
         log("RX(\(len)): \(bytes.prefix(20).map{String(format:"%02x",$0)}.joined(separator:" "))")
+        
+        // Check for unsolicited STATUS (op=3) for mode [31.3]
+        if bytes.count >= 5 && bytes[0] == 0x1F && bytes[1] == 0x03 && bytes[2] & 0x0F == 3 {
+            if let mode = NoiseMode(rawValue: bytes[4]) {
+                log("📡 Unsolicited mode change: \(mode.label)")
+                currentMode = mode
+                DispatchQueue.main.async { self.onUpdate?() }
+            }
+        }
+        
         responseData = bytes
         responseReceived = true
     }
@@ -235,6 +248,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelClosed(_ rfcommChannel: IOBluetoothRFCOMMChannel!) {
         log("CLOSED")
         channel = nil
+        stopPollTimer()
         startReconnectTimer()
         DispatchQueue.main.async { self.onUpdate?() }
     }
@@ -266,6 +280,27 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
             reconnectTimer = nil
         }
     }
+    
+    private func startPollTimer() {
+        stopPollTimer()
+        log("Starting state poll (every 10s)")
+        perform(#selector(schedulePollTimer), on: btThread!, with: nil, waitUntilDone: false)
+    }
+    
+    @objc private func schedulePollTimer() {
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.channel != nil else { return }
+            self.log("Poll refresh")
+            self.doRefreshState()
+        }
+    }
+    
+    private func stopPollTimer() {
+        if let t = pollTimer {
+            t.invalidate()
+            pollTimer = nil
+        }
+    }
 }
 
 // ─── Menu Bar ───────────────────────────────────────────────────────────────
@@ -273,6 +308,19 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     let bose = BoseManager.shared
+    
+    private let defaults = UserDefaults.standard
+    private let kShowBattery = "showBatteryInBar"
+    private let kShowMode = "showModeInBar"
+    
+    var showBatteryInBar: Bool {
+        get { defaults.bool(forKey: kShowBattery) }
+        set { defaults.set(newValue, forKey: kShowBattery); updateUI() }
+    }
+    var showModeInBar: Bool {
+        get { defaults.bool(forKey: kShowMode) }
+        set { defaults.set(newValue, forKey: kShowMode); updateUI() }
+    }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -286,14 +334,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func updateUI() {
-        // Menu bar text
         if let button = statusItem.button {
+            var parts: [String] = []
             if bose.isConnected && bose.batteryLeft >= 0 {
-                let level = min(bose.batteryLeft, bose.batteryRight > 0 ? bose.batteryRight : bose.batteryLeft)
-                button.title = " \(level)% \(bose.currentMode.icon)"
-            } else {
-                button.title = ""
+                if showBatteryInBar {
+                    let level = min(bose.batteryLeft, bose.batteryRight > 0 ? bose.batteryRight : bose.batteryLeft)
+                    parts.append("\(level)%")
+                }
+                if showModeInBar {
+                    parts.append(bose.currentMode.icon)
+                }
             }
+            button.title = parts.isEmpty ? "" : " " + parts.joined(separator: " ")
         }
         
         // Build menu
@@ -339,6 +391,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(ref)
         }
         menu.addItem(NSMenuItem.separator())
+        
+        // Display settings
+        let settingsHeader = NSMenuItem(title: "Menu Bar Display", action: nil, keyEquivalent: "")
+        settingsHeader.isEnabled = false
+        menu.addItem(settingsHeader)
+        
+        let battToggle = NSMenuItem(title: "Show Battery %", action: #selector(toggleBattery), keyEquivalent: "")
+        battToggle.target = self
+        battToggle.state = showBatteryInBar ? .on : .off
+        menu.addItem(battToggle)
+        
+        let modeToggle = NSMenuItem(title: "Show Mode Icon", action: #selector(toggleMode), keyEquivalent: "")
+        modeToggle.target = self
+        modeToggle.state = showModeInBar ? .on : .off
+        menu.addItem(modeToggle)
+        
+        menu.addItem(NSMenuItem.separator())
         let q = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         q.keyEquivalentModifierMask = [.command]
         q.target = self
@@ -352,6 +421,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func refresh() { bose.refreshState() }
     @objc func reconnect() { bose.disconnect(); bose.connectAsync() }
+    @objc func toggleBattery() { showBatteryInBar = !showBatteryInBar }
+    @objc func toggleMode() { showModeInBar = !showModeInBar }
     @objc func quit() { bose.disconnect(); NSApp.terminate(nil) }
 }
 
