@@ -68,6 +68,13 @@ The binary will be at `.build/release/ANChor`.
 open ANChor.app
 ```
 
+### Launch at Login
+
+1. Move `ANChor.app` to `/Applications`
+2. Open **System Settings → General → Login Items**
+3. Click **+** under "Open at Login"
+4. Select `ANChor` from Applications
+
 ## Configuration
 
 ANChor **automatically discovers** paired Bose devices — no manual setup required. It scans your paired Bluetooth devices for known Bose name patterns and connects to the first one found (preferring already-connected devices).
