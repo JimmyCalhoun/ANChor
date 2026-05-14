@@ -30,7 +30,6 @@ The menu bar shows a headphone icon with battery percentage and current mode ind
 | Device | Codename | Product ID | Status |
 |--------|----------|-----------|--------|
 | QC Ultra Earbuds (2nd Gen) | edith | 0x4062 | ✅ Tested |
-| QC Ultra Headphones 2 | wolverine | 0x4082 | Should work* |
 | QC Ultra Earbuds (1st Gen) | scotty | 0x4072 | Should work* |
 
 *These devices use the same BMAP protocol. Contributions with test results welcome!
