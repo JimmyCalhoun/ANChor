@@ -21,8 +21,8 @@ The menu bar shows a headphone icon with battery percentage and current mode ind
 
 - Device name
 - Battery levels (Left / Right / Case)
-- Noise mode toggles (Quiet ✓ / Aware)
-- Refresh and Quit options
+- Noise mode toggles (Quiet ✓ / Aware) with ⌥⌘1 / ⌥⌘2 shortcuts
+- Menu bar display preferences and Quit
 
 ## Supported Devices
 
@@ -41,10 +41,22 @@ The menu bar shows a headphone icon with battery percentage and current mode ind
 
 ## Installation
 
+### Download a release (recommended)
+
+1. Grab the latest `ANChor-vX.Y.Z.zip` from the [Releases page](https://github.com/JimmyCalhoun/ANChor/releases).
+2. Unzip and move `ANChor.app` to `/Applications`.
+3. **First launch:** right-click `ANChor.app` → **Open** → confirm. macOS Gatekeeper shows a warning the first time because the build is ad-hoc signed (not notarized through the Apple Developer Program). After the first launch it opens normally.
+
+If you'd rather not right-click, you can also clear the quarantine attribute from a terminal:
+
+```bash
+xattr -d com.apple.quarantine /Applications/ANChor.app
+```
+
 ### Build from source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ANChor.git
+git clone https://github.com/JimmyCalhoun/ANChor.git
 cd ANChor
 swift build -c release
 ```
@@ -123,7 +135,7 @@ RX: [0x1F, 0x03, 0x06, 0x01, new_mode_idx]  (RESULT = success)
 - Click "Reconnect" in the menu or restart the app
 
 **No battery shown**
-- Click "Refresh" — battery query may have timed out on initial connect
+- Close and reopen the menu — the app re-queries device state every time the menu opens. If it still doesn't appear, click "Reconnect".
 
 ## Acknowledgments
 

@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v1.0.0). Leave blank to use the current ref.'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          # Strip leading 'v' for CFBundleShortVersionString.
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build app bundle
+        run: ./scripts/bundle.sh
+
+      - name: Stamp version into Info.plist
+        run: |
+          PLIST="ANChor.app/Contents/Info.plist"
+          /usr/bin/plutil -replace CFBundleShortVersionString -string "${{ steps.version.outputs.version }}" "$PLIST"
+          /usr/bin/plutil -replace CFBundleVersion           -string "${{ steps.version.outputs.version }}" "$PLIST"
+          /usr/bin/plutil -p "$PLIST"
+
+      - name: Ad-hoc codesign
+        run: codesign --sign - --deep --force --timestamp=none ANChor.app
+
+      - name: Verify signature
+        run: codesign --verify --deep --strict --verbose=2 ANChor.app
+
+      - name: Zip artifact
+        run: ditto -c -k --keepParent ANChor.app "ANChor-${{ steps.version.outputs.tag }}.zip"
+
+      - name: Compute checksum
+        run: shasum -a 256 "ANChor-${{ steps.version.outputs.tag }}.zip" | tee "ANChor-${{ steps.version.outputs.tag }}.zip.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ANChor ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            ANChor-${{ steps.version.outputs.tag }}.zip
+            ANChor-${{ steps.version.outputs.tag }}.zip.sha256
+          body: |
+            ## Install
+
+            1. Download `ANChor-${{ steps.version.outputs.tag }}.zip` below and unzip.
+            2. Move `ANChor.app` to `/Applications`.
+            3. **First launch:** right-click `ANChor.app` → **Open** → **Open** in the confirmation dialog.
+
+            The app is ad-hoc signed (not notarized), so macOS Gatekeeper requires this one-time bypass. After the first launch, it opens normally.
+
+            ## Verify
+
+            ```
+            shasum -a 256 -c ANChor-${{ steps.version.outputs.tag }}.zip.sha256
+            ```

@@ -10,8 +10,21 @@ func bmapPacket(fblock: UInt8, func_id: UInt8, op: UInt8, payload: [UInt8] = [])
 enum NoiseMode: UInt8, CaseIterable {
     case quiet = 0
     case aware = 1
-    var label: String { self == .quiet ? "Quiet" : "Aware" }
-    var icon: String { self == .quiet ? "🔇" : "👂" }
+
+    var label: String {
+        switch self {
+        case .quiet: return "Quiet"
+        case .aware: return "Aware"
+        }
+    }
+
+    /// SF Symbol used both in the menu and (optionally) in the menu bar.
+    var symbolName: String {
+        switch self {
+        case .quiet: return "speaker.slash.fill"
+        case .aware: return "ear"
+        }
+    }
 }
 
 // ─── BT Manager (Thread-based for proper RunLoop) ───────────────────────────
@@ -305,7 +318,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
 // ─── Menu Bar ───────────────────────────────────────────────────────────────
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     let bose = BoseManager.shared
     
@@ -325,105 +338,185 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "headphones", accessibilityDescription: "Bose")
-            button.image?.size = NSSize(width: 18, height: 18)
+            button.imagePosition = .imageLeading
+            button.image = barImage(for: bose.currentMode)
         }
         bose.onUpdate = { [weak self] in self?.updateUI() }
         updateUI()
         bose.connectAsync()
     }
+
+    /// Single template image for the status bar. Reflects the current mode
+    /// when "Show Mode Icon" is on, otherwise falls back to a neutral headphone.
+    private func barImage(for mode: NoiseMode) -> NSImage? {
+        let name = showModeInBar ? mode.symbolName : "headphones"
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: "ANChor — \(mode.label)")
+        img?.isTemplate = true
+        return img
+    }
     
     func updateUI() {
         if let button = statusItem.button {
-            var parts: [String] = []
-            if bose.isConnected && bose.batteryLeft >= 0 {
-                if showBatteryInBar {
-                    let level = min(bose.batteryLeft, bose.batteryRight > 0 ? bose.batteryRight : bose.batteryLeft)
-                    parts.append("\(level)%")
-                }
-                if showModeInBar {
-                    parts.append(bose.currentMode.icon)
-                }
+            button.image = barImage(for: bose.currentMode)
+            if bose.isConnected && bose.batteryLeft >= 0 && showBatteryInBar {
+                let level = min(bose.batteryLeft, bose.batteryRight > 0 ? bose.batteryRight : bose.batteryLeft)
+                button.title = " \(level)%"
+            } else {
+                button.title = ""
             }
-            button.title = parts.isEmpty ? "" : " " + parts.joined(separator: " ")
         }
-        
-        // Build menu
+
         let menu = NSMenu()
+        menu.delegate = self
+
+        // Device name as a disabled item, bold.
         let header = NSMenuItem(title: bose.deviceName, action: nil, keyEquivalent: "")
         header.isEnabled = false
-        header.attributedTitle = NSAttributedString(string: header.title, attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])
+        header.attributedTitle = NSAttributedString(
+            string: bose.deviceName,
+            attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]
+        )
         menu.addItem(header)
-        
+
         if !bose.isConnected {
-            menu.addItem(NSMenuItem(title: "⏳ Connecting...", action: nil, keyEquivalent: ""))
-            menu.addItem(NSMenuItem.separator())
-            let r = NSMenuItem(title: "Reconnect", action: #selector(reconnect), keyEquivalent: "r")
+            let connecting = NSMenuItem(title: "Connecting…", action: nil, keyEquivalent: "")
+            connecting.isEnabled = false
+            connecting.image = symbol("antenna.radiowaves.left.and.right.slash")
+            menu.addItem(connecting)
+            menu.addItem(.separator())
+            let r = NSMenuItem(title: "Reconnect", action: #selector(reconnect), keyEquivalent: "")
             r.target = self
             menu.addItem(r)
         } else {
-            // Battery
-            var battParts: [String] = []
-            if bose.batteryLeft >= 0 { battParts.append("L:\(bose.batteryLeft)%") }
-            if bose.batteryRight >= 0 { battParts.append("R:\(bose.batteryRight)%") }
-            if bose.batteryCase >= 0 { battParts.append("Case:\(bose.batteryCase)%") }
-            if !battParts.isEmpty {
-                let b = NSMenuItem(title: "🔋 \(battParts.joined(separator: "  "))", action: nil, keyEquivalent: "")
+            // Battery — one row with an SF Symbol that reflects the lowest level.
+            let minBatt = [bose.batteryLeft, bose.batteryRight, bose.batteryCase].filter { $0 >= 0 }.min()
+            if let _ = minBatt {
+                var parts: [String] = []
+                if bose.batteryLeft  >= 0 { parts.append("L \(bose.batteryLeft)") }
+                if bose.batteryRight >= 0 { parts.append("R \(bose.batteryRight)") }
+                if bose.batteryCase  >= 0 { parts.append("Case \(bose.batteryCase)") }
+                let b = NSMenuItem(title: parts.joined(separator: " · "), action: nil, keyEquivalent: "")
                 b.isEnabled = false
+                b.image = symbol(batterySymbol(forPercent: minBatt!))
                 menu.addItem(b)
             }
-            menu.addItem(NSMenuItem.separator())
-            
-            let nc = NSMenuItem(title: "Noise Control", action: nil, keyEquivalent: "")
-            nc.isEnabled = false
-            menu.addItem(nc)
-            
-            for mode in NoiseMode.allCases {
-                let item = NSMenuItem(title: "\(mode.icon)  \(mode.label)", action: #selector(modeClicked(_:)), keyEquivalent: "")
+
+            menu.addItem(sectionHeader("Listening Mode"))
+            for (i, mode) in NoiseMode.allCases.enumerated() {
+                let item = NSMenuItem(
+                    title: mode.label,
+                    action: #selector(modeClicked(_:)),
+                    keyEquivalent: "\(i + 1)"
+                )
+                item.keyEquivalentModifierMask = [.command, .option]
                 item.target = self
                 item.tag = Int(mode.rawValue)
                 item.state = mode == bose.currentMode ? .on : .off
+                item.image = symbol(mode.symbolName)
                 menu.addItem(item)
             }
-            menu.addItem(NSMenuItem.separator())
-            let ref = NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r")
-            ref.target = self
-            menu.addItem(ref)
         }
-        menu.addItem(NSMenuItem.separator())
-        
-        // Display settings
-        let settingsHeader = NSMenuItem(title: "Menu Bar Display", action: nil, keyEquivalent: "")
-        settingsHeader.isEnabled = false
-        menu.addItem(settingsHeader)
-        
-        let battToggle = NSMenuItem(title: "Show Battery %", action: #selector(toggleBattery), keyEquivalent: "")
+
+        menu.addItem(sectionHeader("Menu Bar"))
+
+        let battToggle = NSMenuItem(title: "Show Battery", action: #selector(toggleBattery), keyEquivalent: "")
         battToggle.target = self
         battToggle.state = showBatteryInBar ? .on : .off
         menu.addItem(battToggle)
-        
+
         let modeToggle = NSMenuItem(title: "Show Mode Icon", action: #selector(toggleMode), keyEquivalent: "")
         modeToggle.target = self
         modeToggle.state = showModeInBar ? .on : .off
         menu.addItem(modeToggle)
-        
-        menu.addItem(NSMenuItem.separator())
-        let q = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
+
+        menu.addItem(.separator())
+        let sound = NSMenuItem(title: "Open Sound Settings…", action: #selector(openSoundSettings), keyEquivalent: "")
+        sound.target = self
+        menu.addItem(sound)
+
+        let q = NSMenuItem(title: "Quit ANChor", action: #selector(quit), keyEquivalent: "q")
         q.keyEquivalentModifierMask = [.command]
         q.target = self
         menu.addItem(q)
         statusItem.menu = menu
     }
+
+    // MARK: - Menu construction helpers
+
+    private func symbol(_ name: String) -> NSImage? {
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        if img == nil {
+            bose.log("⚠️ SF Symbol unavailable on this macOS: \(name)")
+        }
+        img?.isTemplate = true
+        return img
+    }
+
+    private func sectionHeader(_ title: String) -> NSMenuItem {
+        if #available(macOS 14.0, *) {
+            return NSMenuItem.sectionHeader(title: title)
+        }
+        let item = NSMenuItem(title: title.uppercased(), action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        item.attributedTitle = NSAttributedString(
+            string: title.uppercased(),
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .kern: 0.5
+            ]
+        )
+        return item
+    }
+
+    private func batterySymbol(forPercent p: Int) -> String {
+        // SF Symbols 3 names so this works on macOS 13 (Ventura).
+        switch p {
+        case ..<13:  return "battery.0"
+        case ..<38:  return "battery.25"
+        case ..<63:  return "battery.50"
+        case ..<88:  return "battery.75"
+        default:     return "battery.100"
+        }
+    }
     
     @objc func modeClicked(_ sender: NSMenuItem) {
-        guard let mode = NoiseMode(rawValue: UInt8(sender.tag)) else { return }
+        guard let mode = NoiseMode(rawValue: UInt8(sender.tag)) else {
+            bose.log("UI: modeClicked with unknown tag \(sender.tag)")
+            return
+        }
+        bose.log("UI: modeClicked → \(mode.label)")
         bose.setMode(mode)
     }
-    @objc func refresh() { bose.refreshState() }
-    @objc func reconnect() { bose.disconnect(); bose.connectAsync() }
-    @objc func toggleBattery() { showBatteryInBar = !showBatteryInBar }
-    @objc func toggleMode() { showModeInBar = !showModeInBar }
-    @objc func quit() { bose.disconnect(); NSApp.terminate(nil) }
+    @objc func reconnect() {
+        bose.log("UI: reconnect requested")
+        bose.disconnect(); bose.connectAsync()
+    }
+    @objc func toggleBattery() {
+        showBatteryInBar = !showBatteryInBar
+        bose.log("UI: showBatteryInBar = \(showBatteryInBar)")
+    }
+    @objc func toggleMode() {
+        showModeInBar = !showModeInBar
+        bose.log("UI: showModeInBar = \(showModeInBar)")
+    }
+    @objc func quit() {
+        bose.log("UI: quit")
+        bose.disconnect(); NSApp.terminate(nil)
+    }
+
+    @objc func openSoundSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!
+        bose.log("UI: openSoundSettings → \(url.absoluteString)")
+        NSWorkspace.shared.open(url)
+    }
+
+    // Refresh device state every time the menu opens, so it's always fresh
+    // without a user-visible "Refresh" command.
+    func menuWillOpen(_ menu: NSMenu) {
+        bose.log("UI: menuWillOpen (connected=\(bose.isConnected))")
+        if bose.isConnected { bose.refreshState() }
+    }
 }
 
 // ─── Launch ─────────────────────────────────────────────────────────────────
