@@ -339,25 +339,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.imagePosition = .imageLeading
-            button.image = barImage(for: bose.currentMode)
+            button.image = barImage()
         }
         bose.onUpdate = { [weak self] in self?.updateUI() }
         updateUI()
         bose.connectAsync()
     }
 
-    /// Single template image for the status bar. Reflects the current mode
-    /// when "Show Mode Icon" is on, otherwise falls back to a neutral headphone.
-    private func barImage(for mode: NoiseMode) -> NSImage? {
-        let name = showModeInBar ? mode.symbolName : "headphones"
-        let img = NSImage(systemSymbolName: name, accessibilityDescription: "ANChor — \(mode.label)")
+    /// Single template image for the status bar. Reflects connection state
+    /// first (disconnected always wins), then the current mode if the user
+    /// has opted in to a mode indicator, otherwise a neutral headphone.
+    private func barImage() -> NSImage? {
+        let name: String
+        let accessibility: String
+        if !bose.isConnected {
+            name = "headphones.slash"
+            accessibility = "ANChor — not connected"
+        } else if showModeInBar {
+            name = bose.currentMode.symbolName
+            accessibility = "ANChor — \(bose.currentMode.label)"
+        } else {
+            name = "headphones"
+            accessibility = "ANChor — \(bose.currentMode.label)"
+        }
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: accessibility)
         img?.isTemplate = true
         return img
     }
     
     func updateUI() {
         if let button = statusItem.button {
-            button.image = barImage(for: bose.currentMode)
+            button.image = barImage()
             if bose.isConnected && bose.batteryLeft >= 0 && showBatteryInBar {
                 let level = min(bose.batteryLeft, bose.batteryRight > 0 ? bose.batteryRight : bose.batteryLeft)
                 button.title = " \(level)%"
@@ -379,10 +391,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(header)
 
         if !bose.isConnected {
-            let connecting = NSMenuItem(title: "Connecting…", action: nil, keyEquivalent: "")
-            connecting.isEnabled = false
-            connecting.image = symbol("antenna.radiowaves.left.and.right.slash")
-            menu.addItem(connecting)
+            let status = NSMenuItem(title: "Not connected", action: nil, keyEquivalent: "")
+            status.isEnabled = false
+            status.image = symbol("headphones.slash")
+            menu.addItem(status)
             menu.addItem(.separator())
             let r = NSMenuItem(title: "Reconnect", action: #selector(reconnect), keyEquivalent: "")
             r.target = self
