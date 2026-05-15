@@ -118,6 +118,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
         // Auto-discover paired Bose device
         guard let dev = findBoseDevice() else {
             log("❌ No Bose device found")
+            startReconnectTimer()
             DispatchQueue.main.async { self.onUpdate?() }
             return
         }
@@ -154,6 +155,7 @@ class BoseManager: NSObject, IOBluetoothRFCOMMChannelDelegate {
             startPollTimer()
         } else {
             log("❌ RFCOMM failed: \(result)")
+            startReconnectTimer()
         }
         DispatchQueue.main.async { self.onUpdate?() }
     }
@@ -371,7 +373,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let button = statusItem.button {
             button.image = barImage()
             if bose.isConnected && bose.batteryLeft >= 0 && showBatteryInBar {
-                let level = min(bose.batteryLeft, bose.batteryRight > 0 ? bose.batteryRight : bose.batteryLeft)
+                // Show the lower of the two buds. Fall back to L only when R hasn't
+                // reported yet (sentinel = -1); R == 0 is a real value, not "unread".
+                let level = bose.batteryRight >= 0
+                    ? min(bose.batteryLeft, bose.batteryRight)
+                    : bose.batteryLeft
                 button.title = " \(level)%"
             } else {
                 button.title = ""
